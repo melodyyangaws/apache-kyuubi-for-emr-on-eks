@@ -21,24 +21,26 @@
 #   1. use ./build/dist to make binary tarball of Kyuubi or download an official binary tarball
 #   2. untar it and run the docker command below
 #      docker build -f docker/Dockerfile -t <private-repo>/kyuubi:<tag> .
-
+ARG SPARK_BASE_IMAGE=755674844232.dkr.ecr.us-east-1.amazonaws.com/spark/emr-6.6.0
 ARG BASE_IMAGE=eclipse-temurin:8-jdk-focal
-ARG spark_provided="spark_builtin"
+# ARG spark_provided="spark_builtin"
 
-FROM ${BASE_IMAGE} as builder_spark_provided
-ONBUILD ARG spark_home_in_docker
-ONBUILD ENV SPARK_HOME ${spark_home_in_docker}
+# FROM ${BASE_IMAGE} as builder_spark_provided
+# ONBUILD ARG spark_home_in_docker
+# ONBUILD ENV SPARK_HOME ${spark_home_in_docker}
 
-FROM ${BASE_IMAGE} as builder_spark_builtin
+# FROM ${BASE_IMAGE} as builder_spark_builtin
 
-ONBUILD ENV SPARK_HOME /opt/spark
-ONBUILD RUN mkdir -p ${SPARK_HOME}
-ONBUILD COPY spark-binary ${SPARK_HOME}
+# ONBUILD ENV SPARK_HOME /opt/spark
+# ONBUILD RUN mkdir -p ${SPARK_HOME}
+# ONBUILD COPY spark-binary ${SPARK_HOME}
 
-FROM builder_${spark_provided}
+# FROM builder_${spark_provided}
+FROM ${BASE_IMAGE} as kyuubi_compiled
 
 ARG kyuubi_uid=10009
 USER root
+
 
 ENV KYUUBI_HOME /opt/kyuubi
 ENV KYUUBI_LOG_DIR ${KYUUBI_HOME}/logs
@@ -47,7 +49,7 @@ ENV KYUUBI_WORK_DIR_ROOT ${KYUUBI_HOME}/work
 
 RUN set -ex && \
     sed -i 's/http:\/\/deb.\(.*\)/https:\/\/deb.\1/g' /etc/apt/sources.list && \
-    apt-get update && \
+    apt-get update  && \
     apt-get install -y bash tini libc6 libpam-modules krb5-user libnss3 procps && \
     ln -snf /bin/bash /bin/sh && \
     useradd -u ${kyuubi_uid} -g root kyuubi -d /home/kyuubi -m && \
@@ -58,14 +60,31 @@ COPY LICENSE NOTICE RELEASE ${KYUUBI_HOME}/
 COPY bin ${KYUUBI_HOME}/bin
 COPY jars ${KYUUBI_HOME}/jars
 COPY beeline-jars ${KYUUBI_HOME}/beeline-jars
-COPY web-ui ${KYUUBI_HOME}/web-ui
+# COPY web-ui ${KYUUBI_HOME}/web-ui
 COPY externals/engines/spark ${KYUUBI_HOME}/externals/engines/spark
 
+FROM ${SPARK_BASE_IMAGE}
+USER root
+
+ENV DELTA_PATH /usr/lib/delta/
+ENV KYUUBI_HOME /usr/lib/kyuubi
+
+RUN mkdir -p ${KYUUBI_HOME}
+COPY --from=kyuubi_compiled /opt/kyuubi ${KYUUBI_HOME}
+
+# RUN mkdir -p $DELTA_PATH && cd $DELTA_PATH && \
+ADD https://repo1.maven.org/maven2/io/delta/delta-core_2.12/1.2.1/delta-core_2.12-1.2.1.jar $DELTA_PATH
+ADD https://repo1.maven.org/maven2/io/delta/delta-storage/1.2.1/delta-storage-1.2.1.jar $DELTA_PATH
+ADD https://repo1.maven.org/maven2/mysql/mysql-connector-java/8.0.26/mysql-connector-java-8.0.26.jar ${SPARK_HOME}/jars
+    
+
 WORKDIR ${KYUUBI_HOME}
-RUN chown -R kyuubi:root ${KYUUBI_HOME} && \
+RUN  chown hadoop:hadoop -R ${KYUUBI_HOME} && \
+# RUN chown -R kyuubi:root ${KYUUBI_HOME} && \
     chmod ug+rw -R ${KYUUBI_HOME} && \
-    chmod a+rwx -R ${KYUUBI_WORK_DIR_ROOT}
+    chmod a+rwx -R ${KYUUBI_HOME}/work
 
 CMD [ "./bin/kyuubi", "run" ]
 
-USER ${kyuubi_uid}
+USER hadoop:hadoop
+# USER ${kyuubi_uid}
